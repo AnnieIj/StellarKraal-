@@ -1,10 +1,11 @@
-"use client";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import SearchFilterBar from "@/components/SearchFilterBar";
-import PageTransition from "@/components/PageTransition";
-import Card from "@/components/Card";
-import SkeletonCollateralCard from "@/components/SkeletonCollateralCard";
+'use client';
+import { Suspense, useEffect, useState, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import SearchFilterBar from '@/components/SearchFilterBar';
+import PageTransition from '@/components/PageTransition';
+import Card from '@/components/Card';
+import SkeletonCollateralCard from '@/components/SkeletonCollateralCard';
+import { Button } from '@/components/ui/Button';
 
 interface Collateral {
   id: string;
@@ -15,6 +16,13 @@ interface Collateral {
   status?: string;
 }
 
+interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
 const STATUS_OPTIONS: string[] = [];
 const TYPE_OPTIONS = ['cattle', 'goat', 'sheep', 'pig', 'poultry'];
 
@@ -22,30 +30,57 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function CollateralListContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [items, setItems] = useState<Collateral[]>([]);
+  const [meta, setMeta] = useState<PaginationMeta>({
+    total: 0,
+    page: 1,
+    limit: 10,
+    pages: 1,
+  });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const page = parseInt(searchParams.get('page') ?? '1', 10);
+  const limit = parseInt(searchParams.get('limit') ?? '10', 10);
+  const q = searchParams.get('q') ?? '';
+  const types = searchParams.getAll('type');
+  const sort = searchParams.get('sort') ?? 'newest';
+
+  const fetchCollateral = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('page', page.toString());
+      params.set('limit', limit.toString());
+      if (q) params.set('search', q);
+      if (sort) params.set('sort', sort);
+      types.forEach((t) => params.append('type', t));
+
+      const res = await fetch(`${API}/api/collateral?${params.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch collateral');
+
+      const data = await res.json();
+      setItems(Array.isArray(data.data) ? data.data : []);
+      if (data.meta) setMeta(data.meta);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, q, sort, types]);
 
   useEffect(() => {
-    setLoading(true);
-    fetch(`${API}/api/collateral`)
-      .then((r) => r.json())
-      .then((data) => setItems(Array.isArray(data) ? data : []))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-  }, []);
+    fetchCollateral();
+  }, [fetchCollateral]);
 
-  const q = (searchParams.get('q') ?? '').toLowerCase();
-  const types = searchParams.getAll('type');
-
-  const filtered = items.filter((col) => {
-    const matchesQuery =
-      !q ||
-      col.id.toLowerCase().includes(q) ||
-      col.owner.toLowerCase().includes(q) ||
-      col.animal_type.toLowerCase().includes(q);
-    const matchesType = types.length === 0 || types.includes(col.animal_type);
-    return matchesQuery && matchesType;
-  });
+  const handlePageChange = (newPage: number) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('page', newPage.toString());
+    router.push(`?${params.toString()}`);
+  };
 
   return (
     <div className="space-y-4">
@@ -55,6 +90,12 @@ function CollateralListContent() {
         searchPlaceholder="Search by ID, owner, or animal type…"
       />
 
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       {loading ? (
         <ul className="space-y-2">
           {[...Array(3)].map((_, i) => (
@@ -63,31 +104,64 @@ function CollateralListContent() {
             </li>
           ))}
         </ul>
-      ) : filtered.length === 0 ? (
-        <p className="text-brown-500 text-sm">No collateral matches your filters.</p>
+      ) : items.length === 0 ? (
+        <div className="rounded-lg bg-brown-50 border border-brown-200 p-8 text-center">
+          <p className="text-brown-600 font-medium">No collateral found</p>
+          <p className="text-brown-500 text-sm mt-1">Try adjusting your filters or search terms</p>
+        </div>
       ) : (
-        <ul className="space-y-2">
-          {filtered.map((col) => (
-            <li key={col.id}>
-              <Card>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-semibold text-brown-700 text-sm capitalize">
-                      {col.animal_type} — {col.count} head
-                    </p>
-                    <p className="text-xs text-brown-500 truncate max-w-xs">{col.owner}</p>
+        <>
+          <ul className="space-y-2">
+            {items.map((col) => (
+              <li key={col.id}>
+                <Card>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="font-semibold text-brown-700 text-sm capitalize">
+                        {col.animal_type} — {col.count} head
+                      </p>
+                      <p className="text-xs text-brown-500 truncate max-w-xs">{col.owner}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-brown-700">
+                        {col.appraised_value.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-brown-500">ID: {col.id}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-brown-700">
-                      {col.appraised_value.toLocaleString()}
-                    </p>
-                    <p className="text-xs text-brown-500">ID: {col.id}</p>
-                  </div>
-                </div>
-              </Card>
-            </li>
-          ))}
-        </ul>
+                </Card>
+              </li>
+            ))}
+          </ul>
+
+          {/* Pagination */}
+          {meta.pages > 1 && (
+            <div className="flex items-center justify-between pt-4">
+              <p className="text-sm text-brown-600">
+                Showing {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)} of{' '}
+                {meta.total}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={page === 1}
+                  onClick={() => handlePageChange(page - 1)}
+                >
+                  ← Previous
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={page === meta.pages}
+                  onClick={() => handlePageChange(page + 1)}
+                >
+                  Next →
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
