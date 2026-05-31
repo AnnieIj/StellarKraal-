@@ -22,6 +22,8 @@ export interface CollateralRecord {
   deletedAt: string | null;
 }
 
+export type LoanStatus = "active" | "at_risk" | "repaid" | "liquidated";
+
 export interface LoanRecord {
   id: string;
   borrower: string;
